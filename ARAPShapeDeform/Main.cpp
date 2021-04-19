@@ -6,11 +6,14 @@
 #include <glm/glm.hpp>
 #include <iostream>
 
+//Eigen
+#include <Eigen/Dense>
 
 #include "Mesh.h"
 
 using namespace std;
 using namespace glm;
+using namespace Eigen;
 
 //Loaded Mesh Data
 vector<vec3> loadedVertices, loadedNormals;
@@ -18,22 +21,23 @@ vector<vec3> outVertices, outNorms;
 vector<int> loadedVertexIndices, loadedUVInidces, loadedNormalIndices;
 vector<vec2> tempUVs;
 
-
+//Loaded Constrain Matrix
+MatrixXd constraintsMatrix(4, 4);
 
 bool loadModel(const char * path) {
 
-	printf("Importing Model...\n");	
+	printf("Importing Model...\n");
 
 	FILE * file = fopen(path, "r");
 	if (file == NULL) {
-		printf("Error Opening File\n");
+		printf("Error Opening Mesh\n");
 		return false;
 	}
 
 	while (1) {
 		char lineHeader[128];
 		int res = fscanf(file, "%s", lineHeader);
-		
+
 		if (res == EOF) {
 			break;
 		}
@@ -59,7 +63,7 @@ bool loadModel(const char * path) {
 			int matches = fscanf(file, "%d//%d %d//%d %d//%d\n", &vertexIndex[0], &normalIndex[0],
 				&vertexIndex[1], &normalIndex[1],
 				&vertexIndex[2], &normalIndex[2]);
-			
+
 			loadedVertexIndices.push_back(vertexIndex[0]);
 			loadedVertexIndices.push_back(vertexIndex[1]);
 			loadedVertexIndices.push_back(vertexIndex[2]);
@@ -88,11 +92,66 @@ bool loadModel(const char * path) {
 	return true;
 }
 
+bool loadConstraints(const char *filepath) {
+
+	printf("Loading Constraints...\n");
+
+	//Check file
+	FILE * file = fopen(filepath, "r");
+	if (file == NULL) {
+		printf("Error Opening Constraints\n");
+		return false;
+	}
+
+	int count = 0;
+
+	while (1) {
+		char lineHeader[128];
+		
+		int res = fscanf(file, "%s", lineHeader);
+
+		if (res == EOF) {
+			break;
+		}
+
+		if (strcmp(lineHeader, "#") == 0) {
+			//Skip comments
+			char buffer[100];
+			fgets(buffer, 100, file);
+			cout << buffer << endl;
+		}
+		else {
+			float v1, v2, v3, v4;
+			v1 = stof(lineHeader);
+			fscanf(file, "%f %f %f\n", &v2, &v3, &v4);
+			
+			//Load values to matrix
+			constraintsMatrix(count, 0) = v1;
+			constraintsMatrix(count, 1) = v2;
+			constraintsMatrix(count, 2) = v3;
+			constraintsMatrix(count, 3) = v4;
+
+			//printf("%f %f %f %f\n", v1, v2, v3, v4);
+
+			count++;
+
+		}
+	}
+
+
+	//Print Matrix
+	cout << constraintsMatrix << endl;
+	printf("Matrix Loaded\n");
+	
+
+	return true;
+}
+
 //Core code for assignment
 vector<vec3> deformedVertices, deformedNormals;
 
 void arapDeform() {
-	
+
 	//Testing export logic 
 	deformedVertices = loadedVertices;
 	deformedNormals = loadedNormals;
@@ -103,8 +162,8 @@ void arapDeform() {
 bool exportModel() {
 	printf("Exporting...\n");
 
-	string path = "./ExportObj/DeformedMesh.obj";
-	
+	string path = "./ExportObj/4Face.obj";
+
 	ofstream objExport;
 	objExport.open(path);
 
@@ -132,12 +191,12 @@ bool exportModel() {
 		objExport << "vn " + to_string(v.x) + " " + to_string(v.y) + " " + to_string(v.z) + "\n";
 	}
 
-	for (int i = 0; i < loadedVertexIndices.size(); i+=3) {
-		vec3 vertIndex(loadedVertexIndices.at(i), loadedVertexIndices.at(i+1), loadedVertexIndices.at(i+2));
-		vec3 normIndex(loadedNormalIndices.at(i), loadedNormalIndices.at(i+1), loadedNormalIndices.at(i+2));
-	
-		objExport << "f " + to_string(vertIndex.x) + "//" + to_string(normIndex.x) + " " + 
-			to_string(vertIndex.y) + "//" + to_string(normIndex.y) + " " + 
+	for (int i = 0; i < loadedVertexIndices.size(); i += 3) {
+		vec3 vertIndex(loadedVertexIndices.at(i), loadedVertexIndices.at(i + 1), loadedVertexIndices.at(i + 2));
+		vec3 normIndex(loadedNormalIndices.at(i), loadedNormalIndices.at(i + 1), loadedNormalIndices.at(i + 2));
+
+		objExport << "f " + to_string(vertIndex.x) + "//" + to_string(normIndex.x) + " " +
+			to_string(vertIndex.y) + "//" + to_string(normIndex.y) + " " +
 			to_string(vertIndex.z) + "//" + to_string(normIndex.z) + "\n";
 	}
 
@@ -146,23 +205,36 @@ bool exportModel() {
 	objExport.close();
 
 
-	printf("Successful Export");
+	printf("Successful Export\n");
 	return true;
 }
 
 //Runs on startup
 int main(int argc, char **argv) {
 
-	const char *filename = "./InputObj/bar1.obj";
+	const char *meshFile = "./InputObj/4Face.obj";
+	const char *constraintsFile = "./InputObj/bar.def";
 
 	//Load Model
-	loadModel(filename);
+	loadModel(meshFile);
+
+	//Load Constraints
+	loadConstraints(constraintsFile);
 
 	//Deform Model
 	arapDeform();
 
 	//Export Model
 	exportModel();
+
+	////Demo Eigen
+	//MatrixXd m(2, 2);
+	//m(0, 0) = 3;
+	//m(1, 0) = 2.5;
+	//m(0, 1) = -1;
+	//m(1, 1) = m(1, 0) + m(0, 1);
+	//cout << m << endl;
+
 
 	exit(0);
 }
