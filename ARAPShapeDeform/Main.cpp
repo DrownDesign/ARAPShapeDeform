@@ -1,6 +1,8 @@
 #include <cstdio>
 #include <stdio.h>
 #include <vector>
+#include <map>
+#include <set>
 #include <fstream>
 #include <string>
 #include <glm/glm.hpp>
@@ -19,10 +21,8 @@ using namespace Eigen;
 vector<vec3> loadedVertices, loadedNormals;
 vector<vec3> outVertices, outNorms;
 vector<int> loadedVertexIndices, loadedUVInidces, loadedNormalIndices;
+map<int, set<int>> edges;
 vector<vec2> tempUVs;
-
-//Loaded Constrain Matrix
-MatrixXd constraintsMatrix(4, 4);
 
 bool loadModel(const char * path) {
 
@@ -58,8 +58,7 @@ bool loadModel(const char * path) {
 			loadedNormals.push_back(norm);
 		}
 		else if (strcmp(lineHeader, "f") == 0) {
-			string vertex1, vertex2, vertex3;
-			unsigned int vertexIndex[3], uvIndex[3], normalIndex[3];
+			int vertexIndex[3], normalIndex[3];
 			int matches = fscanf(file, "%d//%d %d//%d %d//%d\n", &vertexIndex[0], &normalIndex[0],
 				&vertexIndex[1], &normalIndex[1],
 				&vertexIndex[2], &normalIndex[2]);
@@ -71,26 +70,128 @@ bool loadModel(const char * path) {
 			loadedNormalIndices.push_back(normalIndex[0]);
 			loadedNormalIndices.push_back(normalIndex[1]);
 			loadedNormalIndices.push_back(normalIndex[2]);
+
+			//Make map of adj vertices for adj matrix
+			edges[vertexIndex[0]-1].insert(vertexIndex[1]-1);
+			edges[vertexIndex[0]-1].insert(vertexIndex[2]-1);
+
+			edges[vertexIndex[1]-1].insert(vertexIndex[0]-1);
+			edges[vertexIndex[1]-1].insert(vertexIndex[2]-1);
+
+			edges[vertexIndex[2]-1].insert(vertexIndex[0]-1);
+			edges[vertexIndex[2]-1].insert(vertexIndex[1]-1);
 		}
-
-		for (unsigned int i = 0; i < loadedVertexIndices.size(); i++) {
-			int vertexIndex = loadedVertexIndices[i];
-			vec3 vertex = loadedVertices[vertexIndex - 1];
-			outVertices.push_back(vertex);
-		}
-
-		for (unsigned int i = 0; i < loadedNormalIndices.size(); i++) {
-			int normalIndex = loadedNormalIndices[i];
-			vec3 normal = loadedNormals[normalIndex - 1];
-			outNorms.push_back(normal);
-		}
-
-
 	}
+
+	for (unsigned int i = 0; i < loadedVertexIndices.size(); i++) {
+		int vertexIndex = loadedVertexIndices[i];
+		vec3 vertex = loadedVertices[vertexIndex - 1];
+		outVertices.push_back(vertex);
+	}
+
+	for (unsigned int i = 0; i < loadedNormalIndices.size(); i++) {
+		int normalIndex = loadedNormalIndices[i];
+		vec3 normal = loadedNormals[normalIndex - 1];
+		outNorms.push_back(normal);
+	}
+
 	fclose(file);
 	printf("End of Load\n");
 	return true;
 }
+
+//Laplacian Matrix
+MatrixXd laplacianMatrix;
+
+//Generates a Laplacian matrix for the loaded mesh
+void generateLaplacian() {
+	
+	int numVertices = loadedVertices.size();
+
+	//Adjacency Matrix <- seems to work?
+	MatrixXd adjMatrix(numVertices, numVertices);
+	adjMatrix.fill(0);
+
+	for (int j = 0; j < numVertices; j++) {
+		for (int i = 0; i < numVertices; i++) {
+			bool edgeExists = false;
+
+			auto neighbours = edges.find(i);
+
+			if (neighbours != edges.end()) {
+				set<int> test = neighbours->second;
+				for (int smt : test) {
+					if (smt == j) {
+						edgeExists = true;
+						continue;
+					}
+				}
+			}
+
+			/*for (const auto& neighbours : edges) {
+				if (neighbours.first == i) {
+					set<int> test = neighbours.second;
+					for (int smt : test) {
+						if (smt == j) {
+							edgeExists = true;
+							continue;
+						}
+					}
+				}
+			}*/
+
+			if (edgeExists) {
+				adjMatrix(i, j) = 1;
+			}
+			else {
+				adjMatrix(i, j) = 0;
+			}
+
+		}
+	}
+
+	printf("\nAdjacency Matrix:\n");
+	cout << adjMatrix << endl;
+	printf("-------------------------------------------\n");
+
+
+	//Degree Matrix
+	MatrixXd degMatrix(numVertices, numVertices);
+	degMatrix.fill(0);
+	
+	for (int j = 0; j < numVertices; j++) {
+		for (int i = 0; i < numVertices; i++) {
+			
+			int degree = 0;
+
+			if (i==j) {
+
+				for (const auto &nbrs : edges) {
+					if (nbrs.first == i) {
+						degree = nbrs.second.size();
+					}
+				}
+				
+				degMatrix(i, j) = degree;
+			}
+
+		}
+	}
+
+	printf("\nDegree Matrix (from adjacency):\n");
+	cout << degMatrix << endl;
+	printf("-------------------------------------------\n");
+
+	laplacianMatrix = degMatrix - adjMatrix;
+
+	printf("\nLaplacian Matrix (L = D - A):\n");
+	cout << laplacianMatrix << endl;
+	printf("-------------------------------------------\n");
+
+}
+
+//Loaded Constrain Matrix
+MatrixXd constraintsMatrix(4, 4);
 
 bool loadConstraints(const char *filepath) {
 
@@ -138,6 +239,7 @@ bool loadConstraints(const char *filepath) {
 		}
 	}
 
+	fclose(file);
 
 	//Print Matrix
 	cout << constraintsMatrix << endl;
@@ -162,7 +264,7 @@ void arapDeform() {
 bool exportModel() {
 	printf("Exporting...\n");
 
-	string path = "./ExportObj/4Face.obj";
+	string path = "./ExportObj/deformedMesh.obj";
 
 	ofstream objExport;
 	objExport.open(path);
@@ -217,6 +319,8 @@ int main(int argc, char **argv) {
 
 	//Load Model
 	loadModel(meshFile);
+
+	generateLaplacian();
 
 	//Load Constraints
 	loadConstraints(constraintsFile);
