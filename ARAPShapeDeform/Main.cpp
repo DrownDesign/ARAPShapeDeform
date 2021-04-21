@@ -101,7 +101,7 @@ bool loadModel(const char * path) {
 }
 
 //Laplacian Matrix
-MatrixXd laplacianMatrix;
+MatrixXf laplacianMatrix;
 
 //Generates a Laplacian matrix for the loaded mesh
 void generateLaplacian() {
@@ -109,7 +109,7 @@ void generateLaplacian() {
 	int numVertices = loadedVertices.size();
 
 	//Adjacency Matrix <- seems to work?
-	MatrixXd adjMatrix(numVertices, numVertices);
+	MatrixXi adjMatrix(numVertices, numVertices);
 	adjMatrix.fill(0);
 
 	for (int j = 0; j < numVertices; j++) {
@@ -156,7 +156,7 @@ void generateLaplacian() {
 
 
 	//Degree Matrix
-	MatrixXd degMatrix(numVertices, numVertices);
+	MatrixXi degMatrix(numVertices, numVertices);
 	degMatrix.fill(0);
 	
 	for (int j = 0; j < numVertices; j++) {
@@ -182,7 +182,7 @@ void generateLaplacian() {
 	cout << degMatrix << endl;
 	printf("-------------------------------------------\n");
 
-	laplacianMatrix = degMatrix - adjMatrix;
+	laplacianMatrix = degMatrix.cast<float>() - adjMatrix.cast<float>();
 
 	printf("\nLaplacian Matrix (L = D - A):\n");
 	cout << laplacianMatrix << endl;
@@ -190,8 +190,66 @@ void generateLaplacian() {
 
 }
 
+vector<vec3> diffCoords;
+VectorXf xDiffPositions, yDiffPositions, zDiffPositions;
+
+
+void generateDifCoords() {
+
+	//Seperate positions into x,y,z vectors
+	VectorXf xPositions(loadedVertices.size()), yPositions(loadedVertices.size()), zPositions(loadedVertices.size());
+	
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		vec3 originalPosition = loadedVertices.at(i);
+
+		xPositions(i) = originalPosition.x;
+		yPositions(i) = originalPosition.y;
+		zPositions(i) = originalPosition.z;
+
+	}
+
+	//Calculate differentials
+	xDiffPositions = laplacianMatrix * xPositions;
+	yDiffPositions = laplacianMatrix * yPositions;
+	zDiffPositions = laplacianMatrix * zPositions;
+
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		vec3 diffPosition(xDiffPositions(i), yDiffPositions(i), zDiffPositions(i));
+		
+		diffCoords.push_back(diffPosition);
+
+		
+		printf("Original Position: %f %f %f		New Position: %f %f %f\n", loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z, 
+			diffCoords.at(i).x, diffCoords.at(i).y, diffCoords.at(i).z);
+	}
+	
+}
+
+vector<vec3> recoveredPositions;
+
+//Recover the surface of the model by solving a linear system
+void recoverSurface() {
+
+	MatrixXf invLaplacian = laplacianMatrix.inverse();
+
+	VectorXf xRecoverdPos = invLaplacian * xDiffPositions;
+	VectorXf yRecoverdPos = invLaplacian * xDiffPositions;
+	VectorXf zRecoverdPos = invLaplacian * xDiffPositions;
+
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		vec3 recoveredPos(xRecoverdPos(i), yRecoverdPos(i), zRecoverdPos(i));
+
+		recoveredPositions.push_back(recoveredPos);
+
+
+		printf("Diff Position: %f %f %f		Recovered Position: %f %f %f\n", diffCoords.at(i).x, diffCoords.at(i).y, diffCoords.at(i).z,
+			recoveredPositions.at(i).x, recoveredPositions.at(i).y, recoveredPositions.at(i).z);
+	}
+
+}
+
 //Loaded Constrain Matrix
-MatrixXd constraintsMatrix(4, 4);
+MatrixXf constraintsMatrix(4, 4);
 
 bool loadConstraints(const char *filepath) {
 
@@ -320,7 +378,14 @@ int main(int argc, char **argv) {
 	//Load Model
 	loadModel(meshFile);
 
+	//Generate Laplacian Matrix
 	generateLaplacian();
+
+	//Generate Differential Coordinates
+	generateDifCoords();
+
+	//Recover surface
+	recoverSurface();
 
 	//Load Constraints
 	loadConstraints(constraintsFile);
