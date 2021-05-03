@@ -327,6 +327,11 @@ void generateDifCoords() {
 	
 }
 
+//Find optimal rotation (local step)
+void findRotation() {
+
+}
+
 vector<vec3> recoveredPositions;
 
 //Recover the surface of the model by solving a linear system
@@ -354,7 +359,7 @@ void recoverSurface() {
 	}
 
 	//Invert Laplacian
-	MatrixXf InvLaplacian = tempLaplacian.transpose();
+	MatrixXf InvLaplacian = tempLaplacian.inverse();
 
 	printf("\nTemp Laplacian:\n");
 	cout << tempLaplacian << endl;
@@ -364,13 +369,14 @@ void recoverSurface() {
 	cout << InvLaplacian << endl;
 	printf("-------------------------------------------\n");
 
-	//ERROR HERE=============================================================================================================================================================================
-
-	//Example X = 3,3,3
-	
-	xDiffPositions(2) = 3;
-	yDiffPositions(2) = 3;
+	//Fixed Example
+	xDiffPositions(2) = 15;
+	xDiffPositions(5) = 20;
+	yDiffPositions(2) = 15;
+	yDiffPositions(5) = 30;
 	zDiffPositions(2) = 3;
+	zDiffPositions(5) = 3;
+
 
 	cout << xDiffPositions << endl;
 
@@ -386,17 +392,6 @@ void recoverSurface() {
 		recoveredPositions.push_back(recoveredPos);
 		printf("Index: %i, Position: %f %f %f\n", i, recoveredPos.x, recoveredPos.y, recoveredPos.z);
 	}
-}
-
-//Core code for assignment
-vector<vec3> deformedVertices, deformedNormals;
-
-void arapDeform() {
-
-	//Testing export logic 
-	deformedVertices = loadedVertices;
-	deformedNormals = loadedNormals;
-
 }
 
 //Exports the model after deformation
@@ -468,11 +463,11 @@ int main(int argc, char **argv) {
 	//Generate Differential Coordinates
 	generateDifCoords();
 
-	//Recover surface
-	recoverSurface();
+	//Find optimal rotation (Local) Need to put in loop with global
+	findRotation();
 
-	//Deform Model
-	//arapDeform();
+	//Recover surface (Global)
+	recoverSurface();
 
 	//Export Model
 	exportModel();
