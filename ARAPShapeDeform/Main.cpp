@@ -100,6 +100,109 @@ bool loadModel(const char * path) {
 	return true;
 }
 
+//Loaded Constraints vector
+vector<int> vertTypes;
+
+bool loadVertexTypes(const char *filepath) {
+
+	printf("Loading Constraints...\n");
+
+	//Check file
+	FILE * file = fopen(filepath, "r");
+	if (file == NULL) {
+		printf("Error Opening Constraints\n");
+		return false;
+	}
+
+	while (1) {
+		char lineHeader[128];
+
+		int res = fscanf(file, "%s", lineHeader);
+
+		if (res == EOF) {
+			break;
+		}
+
+		if (strcmp(lineHeader, "#") == 0) {
+			//Skip comments
+			char buffer[100];
+			fgets(buffer, 100, file);
+			//cout << buffer << endl;
+		}
+		else {
+			int value, v1;
+			v1 = stof(lineHeader);
+			fscanf(file, "%i", &value);
+
+			//Hacky fix for line skipping but it works
+			vertTypes.push_back(v1);
+			vertTypes.push_back(value);
+		}
+
+	}
+
+	return true;
+}
+
+//Loaded Deformation Matrix
+MatrixXf deformationMatrix(4, 4);
+
+bool loadDeformation(const char *filepath) {
+
+	printf("Loading Deformation...\n");
+
+	//Check file
+	FILE * file = fopen(filepath, "r");
+	if (file == NULL) {
+		printf("Error Opening Constraints\n");
+		return false;
+	}
+
+	int count = 0;
+
+	while (1) {
+		char lineHeader[128];
+
+		int res = fscanf(file, "%s", lineHeader);
+
+		if (res == EOF) {
+			break;
+		}
+
+		if (strcmp(lineHeader, "#") == 0) {
+			//Skip comments
+			char buffer[100];
+			fgets(buffer, 100, file);
+			//cout << buffer << endl;
+		}
+		else {
+			float v1, v2, v3, v4;
+			v1 = stof(lineHeader);
+			fscanf(file, "%f %f %f\n", &v2, &v3, &v4);
+
+			//Load values to matrix
+			deformationMatrix(count, 0) = v1;
+			deformationMatrix(count, 1) = v2;
+			deformationMatrix(count, 2) = v3;
+			deformationMatrix(count, 3) = v4;
+
+			//printf("%f %f %f %f\n", v1, v2, v3, v4);
+
+			count++;
+
+		}
+	}
+
+	fclose(file);
+
+	//Print Matrix
+	//cout << deformationMatrix << endl;
+	//printf("Matrix Loaded\n");
+
+
+	return true;
+}
+
 //Laplacian Matrix
 MatrixXf laplacianMatrix;
 
@@ -112,8 +215,8 @@ void generateLaplacian() {
 	MatrixXi adjMatrix(numVertices, numVertices);
 	adjMatrix.fill(0);
 
-	for (int j = 0; j < numVertices; j++) {
-		for (int i = 0; i < numVertices; i++) {
+	for (int j = 0; j < numVertices ; j++) {
+		for (int i = 0; i < numVertices ; i++) {
 			bool edgeExists = false;
 
 			auto neighbours = edges.find(i);
@@ -193,7 +296,6 @@ void generateLaplacian() {
 vector<vec3> diffCoords;
 VectorXf xDiffPositions, yDiffPositions, zDiffPositions;
 
-
 void generateDifCoords() {
 
 	//Seperate positions into x,y,z vectors
@@ -219,8 +321,8 @@ void generateDifCoords() {
 		diffCoords.push_back(diffPosition);
 
 		
-		printf("Original Position: %f %f %f		New Position: %f %f %f\n", loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z, 
-			diffCoords.at(i).x, diffCoords.at(i).y, diffCoords.at(i).z);
+		/*printf("Original Position: %f %f %f		New Position: %f %f %f\n", loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z, 
+			diffCoords.at(i).x, diffCoords.at(i).y, diffCoords.at(i).z);*/
 	}
 	
 }
@@ -230,81 +332,60 @@ vector<vec3> recoveredPositions;
 //Recover the surface of the model by solving a linear system
 void recoverSurface() {
 
-	MatrixXf invLaplacian = laplacianMatrix.inverse();
+	//Find Constraints
+	vector<int> constraintIndices;
+	int index = 0;
+	for (int v : vertTypes) {
+		if (v == 0) { constraintIndices.push_back(index); }
+		index++;
+	}
 
-	VectorXf xRecoverdPos = invLaplacian * xDiffPositions;
-	VectorXf yRecoverdPos = invLaplacian * xDiffPositions;
-	VectorXf zRecoverdPos = invLaplacian * xDiffPositions;
+	MatrixXf tempLaplacian = laplacianMatrix;
+
+	//Alter Laplacian to match
+	for (int i : constraintIndices) {
+		for (int x = 0; x < loadedVertices.size(); x++) {
+			tempLaplacian(i, x) = 0;
+
+			if (x == i) {
+				tempLaplacian(i, x) = 1;
+			}
+		}
+	}
+
+	//Invert Laplacian
+	MatrixXf InvLaplacian = tempLaplacian.transpose();
+
+	printf("\nTemp Laplacian:\n");
+	cout << tempLaplacian << endl;
+	printf("-------------------------------------------\n");
+
+	printf("\nInverse Laplacian:\n");
+	cout << InvLaplacian << endl;
+	printf("-------------------------------------------\n");
+
+	//ERROR HERE=============================================================================================================================================================================
+
+	//Example X = 3,3,3
+	
+	xDiffPositions(2) = 3;
+	yDiffPositions(2) = 3;
+	zDiffPositions(2) = 3;
+
+	cout << xDiffPositions << endl;
+
+	//Multiply LT by d(x,y,z)
+	VectorXf recoveredX = InvLaplacian * xDiffPositions;
+	VectorXf recoveredY = InvLaplacian * yDiffPositions;
+	VectorXf recoveredZ = InvLaplacian * zDiffPositions;
+
+	cout << recoveredX << endl;
 
 	for (int i = 0; i < loadedVertices.size(); i++) {
-		vec3 recoveredPos(xRecoverdPos(i), yRecoverdPos(i), zRecoverdPos(i));
-
+		vec3 recoveredPos(recoveredX(i), recoveredY(i), recoveredZ(i));
 		recoveredPositions.push_back(recoveredPos);
-
-
-		printf("Diff Position: %f %f %f		Recovered Position: %f %f %f\n", diffCoords.at(i).x, diffCoords.at(i).y, diffCoords.at(i).z,
-			recoveredPositions.at(i).x, recoveredPositions.at(i).y, recoveredPositions.at(i).z);
+		printf("Index: %i, Position: %f %f %f\n", i, recoveredPos.x, recoveredPos.y, recoveredPos.z);
 	}
-
-}
-
-//Loaded Constrain Matrix
-MatrixXf constraintsMatrix(4, 4);
-
-bool loadConstraints(const char *filepath) {
-
-	printf("Loading Constraints...\n");
-
-	//Check file
-	FILE * file = fopen(filepath, "r");
-	if (file == NULL) {
-		printf("Error Opening Constraints\n");
-		return false;
-	}
-
-	int count = 0;
-
-	while (1) {
-		char lineHeader[128];
-		
-		int res = fscanf(file, "%s", lineHeader);
-
-		if (res == EOF) {
-			break;
-		}
-
-		if (strcmp(lineHeader, "#") == 0) {
-			//Skip comments
-			char buffer[100];
-			fgets(buffer, 100, file);
-			cout << buffer << endl;
-		}
-		else {
-			float v1, v2, v3, v4;
-			v1 = stof(lineHeader);
-			fscanf(file, "%f %f %f\n", &v2, &v3, &v4);
-			
-			//Load values to matrix
-			constraintsMatrix(count, 0) = v1;
-			constraintsMatrix(count, 1) = v2;
-			constraintsMatrix(count, 2) = v3;
-			constraintsMatrix(count, 3) = v4;
-
-			//printf("%f %f %f %f\n", v1, v2, v3, v4);
-
-			count++;
-
-		}
-	}
-
-	fclose(file);
-
-	//Print Matrix
-	cout << constraintsMatrix << endl;
-	printf("Matrix Loaded\n");
-	
-
-	return true;
 }
 
 //Core code for assignment
@@ -322,7 +403,7 @@ void arapDeform() {
 bool exportModel() {
 	printf("Exporting...\n");
 
-	string path = "./ExportObj/deformedMesh.obj";
+	string path = "./ExportObj/4Face.obj";
 
 	ofstream objExport;
 	objExport.open(path);
@@ -341,8 +422,8 @@ bool exportModel() {
 	objExport << "#\n";
 	objExport << "####\n";
 
-	for (int i = 0; i < loadedVertices.size(); i++) {
-		vec3 v = loadedVertices.at(i);
+	for (int i = 0; i < recoveredPositions.size(); i++) {
+		vec3 v = recoveredPositions.at(i);
 		objExport << "v " + to_string(v.x) + " " + to_string(v.y) + " " + to_string(v.z) + "\n";
 	}
 
@@ -373,10 +454,13 @@ bool exportModel() {
 int main(int argc, char **argv) {
 
 	const char *meshFile = "./InputObj/4Face.obj";
-	const char *constraintsFile = "./InputObj/bar.def";
+	const char *vTypesFile = "./InputObj/4Face.sel";
+	const char *deformationFile = "./InputObj/4Face.def";
 
-	//Load Model
+	//Load Files
 	loadModel(meshFile);
+	loadVertexTypes(vTypesFile);
+	loadDeformation(deformationFile);
 
 	//Generate Laplacian Matrix
 	generateLaplacian();
@@ -387,23 +471,11 @@ int main(int argc, char **argv) {
 	//Recover surface
 	recoverSurface();
 
-	//Load Constraints
-	loadConstraints(constraintsFile);
-
 	//Deform Model
-	arapDeform();
+	//arapDeform();
 
 	//Export Model
 	exportModel();
-
-	////Demo Eigen
-	//MatrixXd m(2, 2);
-	//m(0, 0) = 3;
-	//m(1, 0) = 2.5;
-	//m(0, 1) = -1;
-	//m(1, 1) = m(1, 0) + m(0, 1);
-	//cout << m << endl;
-
 
 	exit(0);
 }
