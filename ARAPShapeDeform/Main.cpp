@@ -11,18 +11,17 @@
 //Eigen
 #include <Eigen/Dense>
 
-#include "Mesh.h"
 
 using namespace std;
 using namespace glm;
 using namespace Eigen;
 
 //Loaded Mesh Data
-vector<vec3> loadedVertices, loadedNormals;
-vector<vec3> outVertices, outNorms;
-vector<int> loadedVertexIndices, loadedUVInidces, loadedNormalIndices;
-map<int, set<int>> edges;
-vector<vec2> tempUVs;
+vector<vec3> loadedVertices, loadedVerticesPrime, loadedNormals;
+vector<int> loadedVertexIndices, loadedNormalIndices;
+map<int, set<int>> neighbours;
+vector<MatrixXf> rotations;
+Matrix4f initialRotation;
 
 bool loadModel(const char * path) {
 
@@ -47,11 +46,6 @@ bool loadModel(const char * path) {
 			fscanf(file, "%f %f %f\n", &vertex.x, &vertex.y, &vertex.z);
 			loadedVertices.push_back(vertex);
 		}
-		/*else if (strcmp(lineHeader, "vt") == 0) {
-			vec2 uv;
-			fscanf(file, "%f %f\n", &uv.x, &uv.y);
-			tempUVs.push_back(uv);
-		}*/
 		else if (strcmp(lineHeader, "vn") == 0) {
 			vec3 norm;
 			fscanf(file, "%f %f %f\n", &norm.x, &norm.y, &norm.z);
@@ -72,30 +66,21 @@ bool loadModel(const char * path) {
 			loadedNormalIndices.push_back(normalIndex[2]);
 
 			//Make map of adj vertices for adj matrix
-			edges[vertexIndex[0]-1].insert(vertexIndex[1]-1);
-			edges[vertexIndex[0]-1].insert(vertexIndex[2]-1);
+			neighbours[vertexIndex[0]-1].insert(vertexIndex[1]-1);
+			neighbours[vertexIndex[0]-1].insert(vertexIndex[2]-1);
 
-			edges[vertexIndex[1]-1].insert(vertexIndex[0]-1);
-			edges[vertexIndex[1]-1].insert(vertexIndex[2]-1);
+			neighbours[vertexIndex[1]-1].insert(vertexIndex[0]-1);
+			neighbours[vertexIndex[1]-1].insert(vertexIndex[2]-1);
 
-			edges[vertexIndex[2]-1].insert(vertexIndex[0]-1);
-			edges[vertexIndex[2]-1].insert(vertexIndex[1]-1);
+			neighbours[vertexIndex[2]-1].insert(vertexIndex[0]-1);
+			neighbours[vertexIndex[2]-1].insert(vertexIndex[1]-1);
 		}
 	}
 
-	for (unsigned int i = 0; i < loadedVertexIndices.size(); i++) {
-		int vertexIndex = loadedVertexIndices[i];
-		vec3 vertex = loadedVertices[vertexIndex - 1];
-		outVertices.push_back(vertex);
-	}
-
-	for (unsigned int i = 0; i < loadedNormalIndices.size(); i++) {
-		int normalIndex = loadedNormalIndices[i];
-		vec3 normal = loadedNormals[normalIndex - 1];
-		outNorms.push_back(normal);
-	}
-
 	fclose(file);
+
+	//Same values at start
+	loadedVerticesPrime = loadedVertices;
 	printf("End of Load\n");
 	return true;
 }
@@ -173,7 +158,6 @@ bool loadDeformation(const char *filepath) {
 			//Skip comments
 			char buffer[100];
 			fgets(buffer, 100, file);
-			//cout << buffer << endl;
 		}
 		else {
 			float v1, v2, v3, v4;
@@ -194,13 +178,51 @@ bool loadDeformation(const char *filepath) {
 	}
 
 	fclose(file);
+	
+	//For debugging
+	initialRotation <<
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1;
 
-	//Print Matrix
-	//cout << deformationMatrix << endl;
-	//printf("Matrix Loaded\n");
-
-
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		rotations.push_back(initialRotation);
+	}
+	
+	/*printf("\nDeformation Matrix:\n");
+	cout << deformationMatrix << endl;
+	printf("-------------------------------------------\n");*/
 	return true;
+}
+
+MatrixXf bMatrix;
+
+void intializeBMatrix() {
+	printf("Initializing B Matrix\n");
+	bMatrix.resize(loadedVertices.size(), 3);
+	bMatrix.fill(0);
+
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		auto pair = neighbours.find(i);
+
+		if (pair != neighbours.end()) {
+			set<int> nSet = pair->second;
+			for (int vNIndex : nSet) {
+				Vector4f current(loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z,1);
+				Vector4f vN(loadedVertices.at(vNIndex).x, loadedVertices.at(vNIndex).y, loadedVertices.at(vNIndex).z,1);
+				Vector4f newVec(0.5f * (rotations.at(i) + rotations.at(vNIndex)) * (current - vN));
+				//Check that this should be  += not =
+				bMatrix(i, 0) += newVec(0, 0);
+				bMatrix(i, 1) += newVec(1, 0);
+				bMatrix(i, 2) += newVec(2, 0);
+			}
+		}
+	}
+
+	/*printf("\nB Matrix:\n");
+	cout << bMatrix << endl;
+	printf("-------------------------------------------\n");*/
 }
 
 //Laplacian Matrix
@@ -208,7 +230,7 @@ MatrixXf laplacianMatrix;
 
 //Generates a Laplacian matrix for the loaded mesh
 void generateLaplacian() {
-	
+	printf("Building Laplacian\n");
 	int numVertices = loadedVertices.size();
 
 	//Adjacency Matrix <- seems to work?
@@ -219,10 +241,10 @@ void generateLaplacian() {
 		for (int i = 0; i < numVertices ; i++) {
 			bool edgeExists = false;
 
-			auto neighbours = edges.find(i);
+			auto vN = neighbours.find(i);
 
-			if (neighbours != edges.end()) {
-				set<int> test = neighbours->second;
+			if (vN != neighbours.end()) {
+				set<int> test = vN->second;
 				for (int smt : test) {
 					if (smt == j) {
 						edgeExists = true;
@@ -230,18 +252,6 @@ void generateLaplacian() {
 					}
 				}
 			}
-
-			/*for (const auto& neighbours : edges) {
-				if (neighbours.first == i) {
-					set<int> test = neighbours.second;
-					for (int smt : test) {
-						if (smt == j) {
-							edgeExists = true;
-							continue;
-						}
-					}
-				}
-			}*/
 
 			if (edgeExists) {
 				adjMatrix(i, j) = 1;
@@ -253,9 +263,9 @@ void generateLaplacian() {
 		}
 	}
 
-	printf("\nAdjacency Matrix:\n");
+	/*printf("\nAdjacency Matrix:\n");
 	cout << adjMatrix << endl;
-	printf("-------------------------------------------\n");
+	printf("-------------------------------------------\n");*/
 
 
 	//Degree Matrix
@@ -269,7 +279,7 @@ void generateLaplacian() {
 
 			if (i==j) {
 
-				for (const auto &nbrs : edges) {
+				for (const auto &nbrs : neighbours) {
 					if (nbrs.first == i) {
 						degree = nbrs.second.size();
 					}
@@ -281,25 +291,154 @@ void generateLaplacian() {
 		}
 	}
 
-	printf("\nDegree Matrix (from adjacency):\n");
+	/*printf("\nDegree Matrix (from adjacency):\n");
 	cout << degMatrix << endl;
-	printf("-------------------------------------------\n");
+	printf("-------------------------------------------\n");*/
 
 	laplacianMatrix = degMatrix.cast<float>() - adjMatrix.cast<float>();
 
-	printf("\nLaplacian Matrix (L = D - A):\n");
+	/*printf("\nLaplacian Matrix (L = D - A):\n");
 	cout << laplacianMatrix << endl;
+	printf("-------------------------------------------\n");*/
+
+}
+
+MatrixXf Lc, Bc;
+
+void generateConstraints() {
+	printf("Generating Constraints\n");
+	//Find Constraints
+	vector<int> constraintIndices;
+	int index = 0;
+	for (int v : vertTypes) {
+		if (v == 0) { constraintIndices.push_back(index); }
+		index++;
+	}
+
+	//Constrain v wrt laplacian
+	Lc = laplacianMatrix;
+	for (int i : constraintIndices) {
+		for (int x = 0; x < loadedVertices.size(); x++) {
+			Lc(i, x) = 0;
+
+			if (x == i) {
+				Lc(i, x) = 1;
+			}
+		}
+	}
+
+	printf("\nLc Matrix:\n");
+	cout << Lc << endl;
 	printf("-------------------------------------------\n");
+
+
+//Constrain v wrt BMatrix
+	Bc = bMatrix;
+
+	for (int i : constraintIndices) {
+		for (int x = 0; x < Bc.cols(); x++) {
+			Bc(i, x) = 3 + i;
+
+			if (x == 2) {
+				Bc(i, x) = 0;
+			}
+		}
+	}
+
+	////Constrain v wrt BMatrix
+	//Bc = bMatrix;
+
+	//for (int i : constraintIndices) {			
+	//	Bc(i,0) = loadedVertices.at(i).x;
+	//	Bc(i,1) = loadedVertices.at(i).y;
+	//	Bc(i,2) = loadedVertices.at(i).z;
+	//}
+
+	printf("\nBc Matrix:\n");
+	cout << Bc << endl;
+	printf("-------------------------------------------\n");
+}
+
+MatrixXf Dc;
+vector<Vector3f> vPrimes;
+
+void solvePositions() {
+	printf("Solving Positions\n");
+	Dc = Lc.inverse() * Bc;
+
+	printf("\nDc Matrix:\n");
+	cout << Dc << endl;
+	printf("-------------------------------------------\n");
+
+	for (int i = 0; i < Dc.rows(); i++) {
+		Vector3f newVec;
+		for (int j = 0; j < Dc.cols(); j++) {
+			newVec(j) = Dc(i, j);
+		}
+		vPrimes.push_back(newVec);
+	}
+}
+
+void solveRotations() {
+	printf("Solving Rotations\n");
+
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		vec3 oldV = loadedVertices.at(i);
+		Vector3f v(loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z);
+		Vector3f v1 = vPrimes.at(i);
+
+		//Calculate centroids
+		Vector3f vHat, primeHat;
+		vHat.fill(0);
+		primeHat.fill(0);
+
+		auto pair = neighbours.find(i);
+		if (pair != neighbours.end()) {
+			set<int> nSet = pair->second;
+			for (int vNIndex : nSet) {
+				
+				//Get v values
+				Vector3f oldN(loadedVertices.at(vNIndex).x, loadedVertices.at(vNIndex).y, loadedVertices.at(vNIndex).z);
+				vHat += oldN;
+
+				//Get vPrime values
+				primeHat += vPrimes.at(vNIndex);
+
+			}
+			vHat /= pair->second.size();
+			primeHat /= pair->second.size();
+		}
+
+		Vector3f cV = v - vHat;
+		Vector3f cVPrime = v1 - primeHat;
+
+		MatrixXf covariance = cV * cVPrime.transpose();
+
+		JacobiSVD<MatrixXf> svd(covariance, ComputeThinU | ComputeThinV);
+		MatrixXf uMatrix = svd.matrixU();
+		MatrixXf vMatrix = svd.matrixV();
+
+		MatrixXf optimalRot = vMatrix * uMatrix.transpose();
+		rotations.at(i) = optimalRot;
+		
+		/*printf("\nOptimal Rotation Matrix:\n");
+		cout << optimalRot << endl;
+		printf("-------------------------------------------\n");*/
+
+	}
 
 }
 
 vector<vec3> diffCoords;
 VectorXf xDiffPositions, yDiffPositions, zDiffPositions;
+VectorXf xPositions, yPositions, zPositions;
 
 void generateDifCoords() {
 
 	//Seperate positions into x,y,z vectors
-	VectorXf xPositions(loadedVertices.size()), yPositions(loadedVertices.size()), zPositions(loadedVertices.size());
+	xPositions.resize(loadedVertices.size());
+	yPositions.resize(loadedVertices.size());
+	zPositions.resize(loadedVertices.size());
 	
 	for (int i = 0; i < loadedVertices.size(); i++) {
 		vec3 originalPosition = loadedVertices.at(i);
@@ -325,11 +464,6 @@ void generateDifCoords() {
 			diffCoords.at(i).x, diffCoords.at(i).y, diffCoords.at(i).z);*/
 	}
 	
-}
-
-//Find optimal rotation (local step)
-void findRotation() {
-
 }
 
 vector<vec3> recoveredPositions;
@@ -370,35 +504,87 @@ void recoverSurface() {
 	printf("-------------------------------------------\n");
 
 	//Fixed Example
-	xDiffPositions(2) = 15;
+	/*xDiffPositions(2) = 15;
 	xDiffPositions(5) = 20;
 	yDiffPositions(2) = 15;
 	yDiffPositions(5) = 30;
 	zDiffPositions(2) = 3;
-	zDiffPositions(5) = 3;
+	zDiffPositions(5) = 3;*/
 
-
-	cout << xDiffPositions << endl;
+	//cout << xDiffPositions << endl;
 
 	//Multiply LT by d(x,y,z)
 	VectorXf recoveredX = InvLaplacian * xDiffPositions;
 	VectorXf recoveredY = InvLaplacian * yDiffPositions;
 	VectorXf recoveredZ = InvLaplacian * zDiffPositions;
 
-	cout << recoveredX << endl;
+	//cout << recoveredX << endl;
 
 	for (int i = 0; i < loadedVertices.size(); i++) {
 		vec3 recoveredPos(recoveredX(i), recoveredY(i), recoveredZ(i));
 		recoveredPositions.push_back(recoveredPos);
-		printf("Index: %i, Position: %f %f %f\n", i, recoveredPos.x, recoveredPos.y, recoveredPos.z);
+		//printf("Index: %i, Position: %f %f %f\n", i, recoveredPos.x, recoveredPos.y, recoveredPos.z);
 	}
+}
+
+vector<vec3> deformedMeshPositions;
+//Find optimal rotation (local step)
+void findRotation() {
+	//Covariance VV`T
+	MatrixXf xCovMatrix = xPositions * xDiffPositions.transpose();
+	MatrixXf yCovMatrix = yPositions * yDiffPositions.transpose();
+	MatrixXf zCovMatrix = zPositions * zDiffPositions.transpose();
+
+	/*printf("\nCovariance Matrix:\n");
+	cout << xCovMatrix << endl;
+	printf("-------------------------------------------\n");*/
+
+	//SVD
+	JacobiSVD<MatrixXf> xSvd(xCovMatrix, ComputeThinU | ComputeThinV);
+	JacobiSVD<MatrixXf> ySvd(yCovMatrix, ComputeThinU | ComputeThinV);
+	JacobiSVD<MatrixXf> zSvd(zCovMatrix, ComputeThinU | ComputeThinV);
+
+	//Seperating to get the UV matrices
+	MatrixXf xU = xSvd.matrixU();
+	MatrixXf xV = xSvd.matrixV();
+
+	MatrixXf yU = ySvd.matrixU();
+	MatrixXf yV = ySvd.matrixV();
+
+	MatrixXf zU = zSvd.matrixU();
+	MatrixXf zV = zSvd.matrixV();
+
+	/*printf("\n xU Matrix:\n");
+	cout << xU << endl;
+	printf("-------------------------------------------\n");*/
+
+	/*printf("\n xV Matrix:\n");
+	cout << xV << endl;
+	printf("-------------------------------------------\n");*/
+	
+	//Optimal Rotation of xyz individually
+	MatrixXf xRot = xV * xU.transpose();
+	MatrixXf yRot = yV * yU.transpose();
+	MatrixXf zRot = zV * zU.transpose();
+
+	/*printf("\n X Rotation Matrix:\n");
+	cout << zRot << endl;
+	printf("-------------------------------------------\n");*/
+
+	//Optimal Rotation matrix for xyz combined..?
+	MatrixXf optiRot = xRot * yRot * zRot;
+
+	/*printf("\n Optimal Rotation Matrix:\n");
+	cout << optiRot << endl;
+	printf("-------------------------------------------\n");*/
+
 }
 
 //Exports the model after deformation
 bool exportModel() {
 	printf("Exporting...\n");
 
-	string path = "./ExportObj/4Face.obj";
+	string path = "./ExportObj/deformedMesh.obj";
 
 	ofstream objExport;
 	objExport.open(path);
@@ -417,9 +603,23 @@ bool exportModel() {
 	objExport << "#\n";
 	objExport << "####\n";
 
-	for (int i = 0; i < recoveredPositions.size(); i++) {
-		vec3 v = recoveredPositions.at(i);
-		objExport << "v " + to_string(v.x) + " " + to_string(v.y) + " " + to_string(v.z) + "\n";
+	for (int i = 0; i < Dc.rows(); i++) {
+		
+		float vX, vY, vZ;
+
+		for (int j = 0; j < Dc.cols(); j++) {
+			if (j == 0) {
+				vX = Dc(i, 0);
+			}
+			else if (j == 1) {
+				vY = Dc(i, 1);
+			}
+			else {
+				vZ = Dc(i, 2);
+			}
+		}
+
+		objExport << "v " + to_string(vX) + " " + to_string(vY) + " " + to_string(vZ) + "\n";
 	}
 
 	for (int i = 0; i < loadedNormals.size(); i++) {
@@ -445,6 +645,41 @@ bool exportModel() {
 	return true;
 }
 
+int iterations = 4;
+
+void applyDeformation() {
+	printf("Applying Deform");
+
+	if( iterations < 0 ){
+		printf("Iterations less than 0. Setting to default (2)\n");
+		iterations = 2;
+	}
+
+	float currentEnergy = 0;
+
+	for (int i = 0; i < iterations; i++) {
+		printf("Iteration: %i\n", i);
+
+		//calculate cell rotations
+		printf("Calculating Cell Rotations...\n");
+		for (vec3 vertex : loadedVertices) {
+			//MatrixXf rotation = calculateRotationMatrix
+
+			//Covariance VV`T
+			
+
+
+		}
+
+
+		//apply cell rotations
+
+		//iteration energy = calculate energy()
+
+		//current energy = iteration energy
+	}
+}
+
 //Runs on startup
 int main(int argc, char **argv) {
 
@@ -457,18 +692,22 @@ int main(int argc, char **argv) {
 	loadVertexTypes(vTypesFile);
 	loadDeformation(deformationFile);
 
-	//Generate Laplacian Matrix
+	intializeBMatrix();
 	generateLaplacian();
 
-	//Generate Differential Coordinates
-	generateDifCoords();
 
-	//Find optimal rotation (Local) Need to put in loop with global
-	findRotation();
+	for (int i = 0; i < iterations; i++) {
+		printf("Iteration: %i\n", i);
+		//Constrain vertices
+		generateConstraints();
 
-	//Recover surface (Global)
-	recoverSurface();
+		//solve for best positions
+		solvePositions();
 
+		//solve for best rotations
+		solveRotations();
+	}
+	
 	//Export Model
 	exportModel();
 
