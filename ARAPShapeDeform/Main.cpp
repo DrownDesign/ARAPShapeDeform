@@ -5,29 +5,25 @@
 #include <set>
 #include <fstream>
 #include <string>
-#include <glm/glm.hpp>
 #include <iostream>
 
 //Eigen
 #include <Eigen/Dense>
 
 using namespace std;
-using namespace glm;
 using namespace Eigen;
 
 //SETTINGS
-const bool GLOBAL_STEP = true;
+const bool GLOBAL_STEP = false;
 const int OFFSET = 3;
-const char *meshFile = "./InputObj/4Face.obj";
-const char *vTypesFile = "./InputObj/4Face.sel";
-const char *deformationFile = "./InputObj/4Face.def";
-const int iterations = 1;
-const int DEBUG_ROT = true;
-
-
+const char *meshFile = "./InputObj/tri.obj";
+const char *vTypesFile = "./InputObj/tri.sel";
+const char *deformationFile = "./InputObj/tri.def";
+const int iterations = 10;
+const int DEBUG_ROT = false;
 
 //Loaded Mesh Data
-vector<vec3> loadedVertices, loadedVerticesPrime, loadedNormals;
+vector<Vector3f> loadedVertices, loadedNormals;
 vector<int> loadedVertexIndices, loadedNormalIndices;
 map<int, set<int>> neighbours;
 vector<MatrixXf> rotations;
@@ -52,14 +48,14 @@ bool loadModel(const char * path) {
 		}
 
 		if (strcmp(lineHeader, "v") == 0) {
-			vec3 vertex;
-			fscanf(file, "%f %f %f\n", &vertex.x, &vertex.y, &vertex.z);
-			loadedVertices.push_back(vertex);
+			float x, y, z;
+			fscanf(file, "%f %f %f\n", &x, &y, &z);
+			loadedVertices.push_back(Vector3f(x, y, z));
 		}
 		else if (strcmp(lineHeader, "vn") == 0) {
-			vec3 norm;
-			fscanf(file, "%f %f %f\n", &norm.x, &norm.y, &norm.z);
-			loadedNormals.push_back(norm);
+			float xn, yn, zn;
+			fscanf(file, "%f %f %f\n", &xn, &yn, &zn);
+			loadedNormals.push_back(Vector3f(xn, yn, zn));
 		}
 		else if (strcmp(lineHeader, "f") == 0) {
 			int vertexIndex[3], normalIndex[3];
@@ -76,21 +72,19 @@ bool loadModel(const char * path) {
 			loadedNormalIndices.push_back(normalIndex[2]);
 
 			//Make map of adj vertices for adj matrix
-			neighbours[vertexIndex[0]-1].insert(vertexIndex[1]-1);
-			neighbours[vertexIndex[0]-1].insert(vertexIndex[2]-1);
+			neighbours[vertexIndex[0] - 1].insert(vertexIndex[1] - 1);
+			neighbours[vertexIndex[0] - 1].insert(vertexIndex[2] - 1);
 
-			neighbours[vertexIndex[1]-1].insert(vertexIndex[0]-1);
-			neighbours[vertexIndex[1]-1].insert(vertexIndex[2]-1);
+			neighbours[vertexIndex[1] - 1].insert(vertexIndex[0] - 1);
+			neighbours[vertexIndex[1] - 1].insert(vertexIndex[2] - 1);
 
-			neighbours[vertexIndex[2]-1].insert(vertexIndex[0]-1);
-			neighbours[vertexIndex[2]-1].insert(vertexIndex[1]-1);
+			neighbours[vertexIndex[2] - 1].insert(vertexIndex[0] - 1);
+			neighbours[vertexIndex[2] - 1].insert(vertexIndex[1] - 1);
 		}
 	}
 
 	fclose(file);
 
-	//Same values at start
-	loadedVerticesPrime = loadedVertices;
 	printf("End of Load\n");
 	return true;
 }
@@ -109,29 +103,13 @@ bool loadVertexTypes(const char *filepath) {
 		return false;
 	}
 
-	while (1) {
-		char lineHeader[128];
+	char line[1024];
 
-		int res = fscanf(file, "%s", lineHeader);
-
-		if (res == EOF) {
-			break;
-		}
-
-		if (strcmp(lineHeader, "#") == 0) {
-			//Skip comments
-			char buffer[100];
-			fgets(buffer, 100, file);
-			//cout << buffer << endl;
-		}
-		else {
-			int value, v1;
-			v1 = stof(lineHeader);
-			fscanf(file, "%i", &value);
-
-			//Hacky fix for line skipping but it works
-			vertTypes.push_back(v1);
-			vertTypes.push_back(value);
+	while (fgets(line, sizeof line, file)) {
+		int num;
+		if (sscanf(line, "%i", &num) == 1) {
+			
+			vertTypes.push_back(num);
 		}
 
 	}
@@ -185,7 +163,7 @@ bool loadDeformation(const char *filepath) {
 	}
 
 	fclose(file);
-	
+
 	//For debugging
 	initialRotation <<
 		1, 0, 0, 0,
@@ -202,7 +180,7 @@ bool loadDeformation(const char *filepath) {
 			rotations.push_back(deformationMatrix);
 		}
 	}
-	
+
 	/*printf("\nDeformation Matrix:\n");
 	cout << deformationMatrix << endl;
 	printf("-------------------------------------------\n");*/
@@ -222,9 +200,14 @@ void intializeBMatrix() {
 		if (pair != neighbours.end()) {
 			set<int> nSet = pair->second;
 			for (int vNIndex : nSet) {
-				Vector4f current(loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z,1);
-				Vector4f vN(loadedVertices.at(vNIndex).x, loadedVertices.at(vNIndex).y, loadedVertices.at(vNIndex).z,1);
-				Vector4f newVec(0.5f * (rotations.at(i) + rotations.at(vNIndex)) * (current - vN));
+				Vector3f current = loadedVertices.at(i);
+				Vector4f v4(current(0), current(1), current(2), 1);
+
+				Vector3f neighbour = loadedVertices.at(vNIndex);
+				Vector4f n4(neighbour(0), neighbour(1), neighbour(2), 1);
+
+
+				Vector4f newVec(0.5f * (rotations.at(i) + rotations.at(vNIndex)) * (v4 - n4));
 				//Check that this should be  += not =
 				bMatrix(i, 0) += newVec(0, 0);
 				bMatrix(i, 1) += newVec(1, 0);
@@ -249,8 +232,8 @@ void generateLaplacian() {
 	MatrixXi adjMatrix(numVertices, numVertices);
 	adjMatrix.fill(0);
 
-	for (int j = 0; j < numVertices ; j++) {
-		for (int i = 0; i < numVertices ; i++) {
+	for (int j = 0; j < numVertices; j++) {
+		for (int i = 0; i < numVertices; i++) {
 			bool edgeExists = false;
 
 			auto vN = neighbours.find(i);
@@ -283,20 +266,20 @@ void generateLaplacian() {
 	//Degree Matrix
 	MatrixXi degMatrix(numVertices, numVertices);
 	degMatrix.fill(0);
-	
+
 	for (int j = 0; j < numVertices; j++) {
 		for (int i = 0; i < numVertices; i++) {
-			
+
 			int degree = 0;
 
-			if (i==j) {
+			if (i == j) {
 
 				for (const auto &nbrs : neighbours) {
 					if (nbrs.first == i) {
 						degree = nbrs.second.size();
 					}
 				}
-				
+
 				degMatrix(i, j) = degree;
 			}
 
@@ -367,7 +350,7 @@ void generateConstraints() {
 	//Constrain v wrt laplacian
 	Lc = laplacianMatrix;
 	for (int i : constraintIndices) {
-		for (int x = 0; x < loadedVertices.size(); x++) {
+		for (int x = 0; x < Lc.cols(); x++) {
 			Lc(i, x) = 0;
 
 			if (x == i) {
@@ -380,30 +363,14 @@ void generateConstraints() {
 	cout << Lc << endl;
 	printf("-------------------------------------------\n");*/
 
-	//vector<Vector4f> cRotated;
-	//for (int i : constraintIndices) {
-	//	Vector4f rotatedConstraint(loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z, 1);
-	//	rotatedConstraint = initialRotation * rotatedConstraint;
-	//	cRotated.push_back(rotatedConstraint);
-	//}
-
-	////Constrain v wrt BMatrix
-	//Bc = bMatrix;
-
-	//for (int i : constraintIndices) {
-	//	Vector4f value = cRotated.at(0);
-	//	Bc(i, 0) = value(0);
-	//	Bc(i, 1) = value(1);
-	//	Bc(i, 2) = value(2);
-	//}
-
 	//Constrain v wrt BMatrix
 	Bc = bMatrix;
 
-	for (int i : constraintIndices) {			
-		Bc(i,0) = loadedVertices.at(i).x;
-		Bc(i,1) = loadedVertices.at(i).y;
-		Bc(i,2) = loadedVertices.at(i).z;
+	for (int i : constraintIndices) {
+		Vector3f current = loadedVertices.at(i);
+		Bc(i, 0) = current(0);
+		Bc(i, 1) = current(1);
+		Bc(i, 2) = current(2);
 	}
 
 	/*printf("\nBc Matrix:\n");
@@ -434,51 +401,65 @@ void solvePositions() {
 void solveRotations() {
 	printf("Solving Rotations\n");
 
+	/*Vector3f a1(0, 0, 0);
+	Vector3f a2(1, 0, 0);
+	Vector3f a3(0, 1, 0);
+	Vector3f b1(0, 0, 0);
+	Vector3f b2(0, 1, 0);
+	Vector3f b3(-1, 0, 0);
+	Matrix3f vHat;
+	
+	vHat.col(0) = a1; vHat.col(1) = a2; vHat.col(2) = a3;
+	Matrix3f vPrime; vPrime.col(0) = b1; vPrime.col(1) = b2; vPrime.col(2) = b3;*/
+
 	for (int i = 0; i < loadedVertices.size(); i++) {
-		vec3 oldV = loadedVertices.at(i);
-		Vector3f v(loadedVertices.at(i).x, loadedVertices.at(i).y, loadedVertices.at(i).z);
-		Vector3f v1 = vPrimes.at(i);
 
-		//Calculate centroids
-		Vector3f vHat, primeHat;
-		vHat.fill(0);
-		primeHat.fill(0);
+		auto search = neighbours.find(i);
+		if (search != neighbours.end()) {
+			set<int> nForI = search->second;
+			int sizeOfN = nForI.size();
 
-		auto pair = neighbours.find(i);
-		if (pair != neighbours.end()) {
-			set<int> nSet = pair->second;
-			for (int vNIndex : nSet) {
-				
-				//Get v values
-				Vector3f oldN(loadedVertices.at(vNIndex).x, loadedVertices.at(vNIndex).y, loadedVertices.at(vNIndex).z);
-				vHat += oldN;
+			MatrixXf vHat(3, sizeOfN), primeHat(3, sizeOfN);
 
-				//Get vPrime values
-				primeHat += vPrimes.at(vNIndex);
-
+			Vector3f currentV = loadedVertices.at(i);
+			int nn = 0;
+			for (int index : nForI) {
+				Vector3f neighbourVertex = loadedVertices.at(index);
+				Vector3f e = currentV - neighbourVertex;
+				vHat.col(nn) = e;
+				nn++;
 			}
-			vHat /= pair->second.size();
-			primeHat /= pair->second.size();
+
+			nn = 0;
+			Vector3f currentPrimeV = vPrimes.at(i);
+			for (int index : nForI) {
+				Vector3f neighbourVertex = vPrimes.at(index);
+				Vector3f e = currentPrimeV - neighbourVertex;
+				primeHat.col(nn) = e;
+				nn++;
+			}
+			/*Vector3f a1(0, 0, 0);
+			Vector3f a2(1, 0, 0);
+			Vector3f a3(0, 1, 0);
+			Vector3f b1(0, 0, 0);
+			Vector3f b2(0, 1, 0);
+			Vector3f b3(-1, 0, 0);
+			Matrix3f vHat; vHat.col(0) = a1; vHat.col(1) = a2; vHat.col(2) = a3;
+			Matrix3f vPrime; vPrime.col(0) = b1; vPrime.col(1) = b2; vPrime.col(2) = b3;*/
+
+			cout << "vHat: " << vHat << endl;
+			cout << "pHat: " << primeHat << endl;
+
+
+			MatrixXf covariance = vHat * primeHat.transpose();
+			JacobiSVD<MatrixXf> svd(covariance, ComputeThinU | ComputeThinV);
+			MatrixXf uMatrix = svd.matrixU(), vMatrix = svd.matrixV();
+			MatrixXf optimalRot = vMatrix * uMatrix.transpose();
+			cout << optimalRot << endl;
+			rotations.at(i) = optimalRot;
 		}
 
-		Vector3f cV = v - vHat;
-		Vector3f cVPrime = v1 - primeHat;
-
-		MatrixXf covariance = cV * cVPrime.transpose();
-
-		JacobiSVD<MatrixXf> svd(covariance, ComputeThinU | ComputeThinV);
-		MatrixXf uMatrix = svd.matrixU();
-		MatrixXf vMatrix = svd.matrixV();
-
-		MatrixXf optimalRot = vMatrix * uMatrix.transpose();
-		rotations.at(i) = optimalRot;
-		
-		/*printf("\nOptimal Rotation Matrix:\n");
-		cout << optimalRot << endl;
-		printf("-------------------------------------------\n");*/
-
 	}
-
 }
 
 //Exports the model after deformation
@@ -504,51 +485,29 @@ bool exportModel() {
 	objExport << "#\n";
 	objExport << "####\n";
 
-	for (int i = 0; i < Dc.rows(); i++) {
-		
-		float vX, vY, vZ;
-
-		for (int j = 0; j < Dc.cols(); j++) {
-			if (j == 0) {
-				vX = Dc(i, 0);
-			}
-			else if (j == 1) {
-				vY = Dc(i, 1);
-			}
-			else {
-				vZ = Dc(i, 2);
-			}
-		}
-
-		objExport << "v " + to_string(vX) + " " + to_string(vY) + " " + to_string(vZ) + "\n";
+	for (int i = 0; i < vPrimes.size(); i++) {
+		Vector3f v = vPrimes.at(i);
+		objExport << "v " + to_string(v(0)) + " " + to_string(v(1)) + " " + to_string(v(2)) + "\n";
 	}
 
 	for (int i = 0; i < loadedNormals.size(); i++) {
-		vec3 v = loadedNormals.at(i);
-		objExport << "vn " + to_string(v.x) + " " + to_string(v.y) + " " + to_string(v.z) + "\n";
+		Vector3f v = loadedNormals.at(i);
+		objExport << "vn " + to_string(v(0)) + " " + to_string(v(1)) + " " + to_string(v(2)) + "\n";
 	}
 
 	for (int i = 0; i < loadedVertexIndices.size(); i += 3) {
-		vec3 vertIndex(loadedVertexIndices.at(i), loadedVertexIndices.at(i + 1), loadedVertexIndices.at(i + 2));
-		vec3 normIndex(loadedNormalIndices.at(i), loadedNormalIndices.at(i + 1), loadedNormalIndices.at(i + 2));
-
-		objExport << "f " + to_string(vertIndex.x) + "//" + to_string(normIndex.x) + " " +
-			to_string(vertIndex.y) + "//" + to_string(normIndex.y) + " " +
-			to_string(vertIndex.z) + "//" + to_string(normIndex.z) + "\n";
+		objExport << "f " + to_string(loadedVertexIndices.at(i)) + "//" + to_string(loadedNormalIndices.at(i)) + " " +
+			to_string(loadedVertexIndices.at(i + 1)) + "//" + to_string(loadedNormalIndices.at(i + 1)) + " " +
+			to_string(loadedVertexIndices.at(i + 2)) + "//" + to_string(loadedNormalIndices.at(i + 2)) + "\n";
 	}
 
-	//Start file here
-
 	objExport.close();
-
 
 	printf("Successful Export\n");
 	return true;
 }
 
-//Runs on startup
-int main(int argc, char **argv) {
-
+void runGlobalTest() {
 	//Load Files
 	loadModel(meshFile);
 	loadVertexTypes(vTypesFile);
@@ -557,29 +516,51 @@ int main(int argc, char **argv) {
 	intializeBMatrix();
 	generateLaplacian();
 
-	if (GLOBAL_STEP) {
+	//Constrain vertices
+	generateGlobalConstraints();
+
+	//solve for best positions
+	solvePositions();
+
+	//Export Model
+	exportModel();
+}
+
+void runARAP() {
+	//Load Files
+	loadModel(meshFile);
+	loadVertexTypes(vTypesFile);
+	loadDeformation(deformationFile);
+
+	intializeBMatrix();
+	generateLaplacian();
+
+	for (int i = 0; i < iterations; i++) {
+		printf("Iteration: %i\n", i);
 		//Constrain vertices
-		generateGlobalConstraints();
+		generateConstraints();
 
 		//solve for best positions
 		solvePositions();
-	}
-	else {
-		for (int i = 0; i < iterations; i++) {
-			printf("Iteration: %i\n", i);
-			//Constrain vertices
-			generateConstraints();
 
-			//solve for best positions
-			solvePositions();
-
-			//solve for best rotations
-			solveRotations();
-		}
+		//solve for best rotations
+		solveRotations();
+		loadedVertices = vPrimes;
 	}
-	
+
 	//Export Model
 	exportModel();
+}
+
+//Runs on startup
+int main(int argc, char **argv) {
+
+	if (GLOBAL_STEP) {
+		runGlobalTest();
+	}
+	else {
+		runARAP();
+	}
 
 	exit(0);
 }
