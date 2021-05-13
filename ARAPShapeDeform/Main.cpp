@@ -14,12 +14,11 @@ using namespace std;
 using namespace Eigen;
 
 //SETTINGS
-const bool GLOBAL_STEP = false;
 const int OFFSET = 3;
-const char *meshFile = "D:/Repos/ARAPShapeDeform/InputObj/cylinder.obj";
-const char *vTypesFile = "D:/Repos/ARAPShapeDeform/InputObj/cylinder.sel";
-const char *deformationFile = "D:/Repos/ARAPShapeDeform/InputObj/cylinder.def";
-const int iterations = 1;
+const char *meshFile = "./InputObj/cylinder.obj";
+const char *vTypesFile = "./InputObj/cylinder.sel";
+const char *deformationFile = "./InputObj/cylinder.def";
+const int iterations = 10;
 const int DEBUG_ROT = false;
 
 //Loaded Mesh Data
@@ -30,7 +29,6 @@ vector<MatrixXf> rotations;
 Matrix3f initialRotation;
 vector<Vector3f> vPrimes;
 MatrixXf Lc, Bc;
-
 
 bool loadModel(const char * path) {
 
@@ -179,9 +177,9 @@ bool loadDeformation(const char *filepath) {
 
 	fclose(file);
 
-	printf("\nDeformation Matrix:\n");
+	/*printf("\nDeformation Matrix:\n");
 	cout << deformationMatrix << endl;
-	printf("-------------------------------------------\n");
+	printf("-------------------------------------------\n");*/
 	return true;
 }
 
@@ -211,8 +209,8 @@ void intializeBMatrix() {
 
 	
 
-	/*printf("\nB Matrix:\n");
-	cout << bMatrix << endl;
+	/*printf("\nBc Matrix:\n");
+	cout << Bc << endl;
 	printf("-------------------------------------------\n");*/
 }
 
@@ -227,11 +225,11 @@ void generateLaplacian() {
 	MatrixXi adjMatrix(numVertices, numVertices);
 	adjMatrix.fill(0);
 
-	for (int i = 0; i < numVertices; i++) {
-		/*for (int i = 0; i < numVertices; i++) {
+	for (int j = 0; j < numVertices; j++) {
+		for (int i = 0; i < numVertices; i++) {
 			bool edgeExists = false;
 
-			set<int> vN = neighbours[i];
+			auto vN = neighbours.find(i);
 
 			if (vN != neighbours.end()) {
 				set<int> test = vN->second;
@@ -249,43 +247,18 @@ void generateLaplacian() {
 			else {
 				adjMatrix(i, j) = 0;
 			}
-
-		}*/
-		set<int> vN = neighbours[i];
-		for (int nIndex : vN) {
-			adjMatrix(i, nIndex) = 1;
-			adjMatrix(nIndex, 1) = 1;
 		}
-
 	}
 
 	/*printf("\nAdjacency Matrix:\n");
 	cout << adjMatrix << endl;
 	printf("-------------------------------------------\n");*/
 
-
 	//Degree Matrix
 	MatrixXi degMatrix(numVertices, numVertices);
 	degMatrix.fill(0);
 
 	for (int i = 0; i < numVertices; i++) {
-		/*for (int i = 0; i < numVertices; i++) {
-
-			int degree = 0;
-
-			if (i == j) {
-
-				for (const auto &nbrs : neighbours) {
-					if (nbrs.first == i) {
-						degree = nbrs.second.size();
-					}
-				}
-
-				degMatrix(i, j) = degree;
-			}
-
-		}*/
-
 		degMatrix(i, i) = neighbours[i].size();
 	}
 
@@ -301,63 +274,23 @@ void generateLaplacian() {
 
 }
 
-
-
-void generateGlobalConstraints() {
-	printf("Generating Constraints\n");
-	//Find Constraints
-	vector<int> constraintIndices;
-	int index = 0;
-	for (int v : loadedVertTypes) {
-		if (v == 0) { constraintIndices.push_back(index); }
-		index++;
-	}
-
-	//Constrain v wrt laplacian
-	Lc = laplacianMatrix;
-	for (int i : constraintIndices) {
-		for (int x = 0; x < loadedVertices.size(); x++) {
-			Lc(i, x) = 0;
-
-			if (x == i) {
-				Lc(i, x) = 1;
-			}
-		}
-	}
-
-	/*printf("\nLc Matrix:\n");
-	cout << Lc << endl;
-	printf("-------------------------------------------\n");*/
-
-
-	//Constrain v wrt BMatrix
-	Bc = bMatrix;
-
-	for (int i : constraintIndices) {
-		for (int x = 0; x < Bc.cols(); x++) {
-			Bc(i, x) = OFFSET + i;
-		}
-	}
-}
-
 void modifyLaplacian() {
 	printf("Modify Laplacian\n");
 
 	//Constrain v wrt laplacian
 	Lc = laplacianMatrix;
 
-	for (int r = 0; r < loadedVertTypes.size(); r++) {
-		int vType = loadedVertTypes.at(r);
-		if (vType == 0) {
-			Lc.row(r).setZero();
-			Lc(r, r) = 1;
-		}
-		else if (vType == 1) {
-			//Free
-		}
-		else if (vType == 2) {
-			Lc.row(r).setZero();
-			Lc(r, r) = 1;
+
+	for (int row = 0; row < loadedVertTypes.size(); row++) {
+		int vertType = loadedVertTypes.at(row);
+		
+		if (vertType != 1) {
+			for (int col = 0; col < loadedVertTypes.size(); col++) {
+				Lc(row, col) = 0;
+				if (row == col) {
+					Lc(row, col) = 1;
+				}
+			}
 		}
 	}
 
@@ -375,13 +308,10 @@ void updateBMatrix() {
 			for (int vNIndex : neighbours[i]) {
 
 				Vector3f current = loadedVertices.at(i);
-				//Vector4f v4(current(0), current(1), current(2), 1);
 
 				Vector3f neighbour = loadedVertices.at(vNIndex);
-				//Vector4f n4(neighbour(0), neighbour(1), neighbour(2), 1);
 
-
-				Vector3f newVec((rotations.at(i) + rotations.at(vNIndex)) * (current - neighbour));
+				Vector3f newVec(.5 * (rotations.at(i) + rotations.at(vNIndex)) * (current - neighbour));
 				//Check that this should be  += not =
 				Bc.row(i) += newVec;
 			}
@@ -398,8 +328,8 @@ MatrixXf Dc;
 
 void solvePositions() {
 	printf("Solving Positions\n");
-	//Dc = Lc.inverse() * Bc;
-	Dc = Lc.householderQr().solve(Bc);
+	Dc = Lc.inverse() * Bc;
+	//Dc = Lc.householderQr().solve(Bc);
 	
 	/*printf("\nDc Matrix:\n");
 	cout << Dc << endl;
@@ -412,17 +342,6 @@ void solvePositions() {
 
 void solveRotations() {
 	printf("Solving Rotations\n");
-
-	/*Vector3f a1(0, 0, 0);
-	Vector3f a2(1, 0, 0);
-	Vector3f a3(0, 1, 0);
-	Vector3f b1(0, 0, 0);
-	Vector3f b2(0, 1, 0);
-	Vector3f b3(-1, 0, 0);
-	Matrix3f vHat;
-
-	vHat.col(0) = a1; vHat.col(1) = a2; vHat.col(2) = a3;
-	Matrix3f vPrime; vPrime.col(0) = b1; vPrime.col(1) = b2; vPrime.col(2) = b3;*/
 
 	for (int i = 0; i < loadedVertices.size(); i++) {
 		//printf("\n\n");
@@ -448,18 +367,6 @@ void solveRotations() {
 			primeHat.col(nn) = e;
 			nn++;
 		}
-		/*Vector3f a1(0, 0, 0);
-		Vector3f a2(1, 0, 0);
-		Vector3f a3(0, 1, 0);
-		Vector3f b1(0, 0, 0);
-		Vector3f b2(0, 1, 0);
-		Vector3f b3(-1, 0, 0);
-		Matrix3f vHat; vHat.col(0) = a1; vHat.col(1) = a2; vHat.col(2) = a3;
-		Matrix3f vPrime; vPrime.col(0) = b1; vPrime.col(1) = b2; vPrime.col(2) = b3;*/
-
-		//cout << "vHat: " << vHat << endl;
-		//cout << "pHat: " << primeHat << endl;
-
 
 		MatrixXf covariance = vHat * primeHat.transpose();
 		JacobiSVD<MatrixXf> svd(covariance, ComputeThinU | ComputeThinV);
@@ -468,15 +375,17 @@ void solveRotations() {
 		//cout << optimalRot << endl;
 		rotations.at(i) = optimalRot;
 
-
+		/*printf("\nRotation at %i:\n", i);
+		cout << optimalRot << endl;
+		printf("-------------------------------------------\n");*/
 	}
 }
 
 //Exports the model after deformation
-bool exportModel() {
+bool exportModel(int iteration) {
 	printf("Exporting...\n");
 
-	string path = "D:/Repos/ARAPShapeDeform/ExportObj/deformedMesh.obj";
+	string path = "./ExportObj/deformedMesh" + to_string(iteration) + ".obj";
 
 	ofstream objExport;
 	objExport.open(path);
@@ -517,26 +426,63 @@ bool exportModel() {
 	return true;
 }
 
-void runGlobalTest() {
-	//Load Files
-	loadModel(meshFile);
-	loadVertexTypes(vTypesFile);
-	loadDeformation(deformationFile);
+void initialGuess() {
 
-	intializeBMatrix();
-	generateLaplacian();
+	int n = loadedVertTypes.size();
+	int nc = 0;
+	for (int row = 0; row < loadedVertTypes.size(); row++) {
+		int vertType = loadedVertTypes.at(row);
+		
+		if (vertType != 1) {
+			nc++;
+		}
 
-	//Constrain vertices
-	generateGlobalConstraints();
+	}
+	int nTotal = n + nc;	
 
-	//solve for best positions
-	solvePositions();
+	MatrixXf vInit(loadedVertices.size(), 3);
+	for (int i = 0; i < loadedVertices.size(); i++) {
+		vInit.row(i) = loadedVertices.at(i);
+	}
+	MatrixXf bInit = laplacianMatrix * vInit;
 
-	//Export Model
-	exportModel();
+	MatrixXf LcInit(nTotal, nTotal);
+	MatrixXf BcInit(nTotal, 3);
+
+	//Constrain v wrt laplacian
+	LcInit.block(0, 0, n, n) = laplacianMatrix;
+	BcInit.block(0, 0, n, 3) = bInit;
+
+	int cIx = 0;
+	for (int vIx = 0; vIx < loadedVertTypes.size(); vIx++) {
+		int vertType = loadedVertTypes.at(vIx);
+		if (vertType == 0) {
+			LcInit(n + cIx, vIx) = 1.0;
+			LcInit(vIx, n + cIx) = 1.0;
+			BcInit.row(n + cIx) = 1.0 * loadedVertices.at(vIx);
+			cIx++;
+		}
+		else if (vertType == 2) {
+			Vector3f v3 = loadedVertices.at(vIx);
+			Vector4f v4d = deformationMatrix * Vector4f(v3(0), v3(1), v3(2), 1.0f);
+			LcInit(n + cIx, vIx) = 1.0;
+			LcInit(vIx, n + cIx) = 1.0;
+			BcInit.row(n + cIx) = 1.0 * Vector3f(v4d(0), v4d(1), v4d(2));
+			cIx++;
+		}
+	}
+
+	MatrixXf vPositions = LcInit.inverse() * BcInit;
+
+	for (int i = 0; i < vPrimes.size(); i++) {
+		vPrimes.at(i) = vPositions.row(i);
+	}
+
 }
 
-void runARAP() {
+//Runs on startup
+int main(int argc, char **argv) {
+
 	//Load Files
 	loadModel(meshFile);
 	loadVertexTypes(vTypesFile);
@@ -546,7 +492,11 @@ void runARAP() {
 
 	modifyLaplacian();
 
+	initialGuess();
+	exportModel(-1);
+
 	initialRotations();
+	solveRotations();
 
 	intializeBMatrix();
 
@@ -560,20 +510,9 @@ void runARAP() {
 
 		//solve for best rotations
 		solveRotations();
-	}
 
-	//Export Model
-	exportModel();
-}
-
-//Runs on startup
-int main(int argc, char **argv) {
-
-	if (GLOBAL_STEP) {
-		runGlobalTest();
-	}
-	else {
-		runARAP();
+		//Export Model
+		exportModel(i);
 	}
 
 	exit(0);
